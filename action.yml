@@ -1,0 +1,89 @@
+name: "AI Release Notes Generator"
+description: "Generate professional, structured release notes using Gemini, Groq, or OpenAI with automatic model discovery and fallback resilience."
+author: "Doksmith"
+
+inputs:
+  version:
+    description: "Target version or tag (defaults to current ref name)"
+    required: false
+    default: "${{ github.ref_name }}"
+  provider:
+    description: "Comma-separated AI Provider preference order (e.g. 'gemini,groq,openai')"
+    required: false
+    default: "gemini,groq,openai"
+  model:
+    description: "Explicit model name. If omitted, automatically discovers and selects the best active model from provider API"
+    required: false
+    default: ""
+  output-file:
+    description: "File path where generated markdown notes will be saved"
+    required: false
+    default: "release-notes.md"
+  prompt-template:
+    description: "Custom markdown prompt template path"
+    required: false
+    default: ""
+  gemini-api-key:
+    description: "Google Gemini API Key"
+    required: false
+    default: ""
+  groq-api-key:
+    description: "Groq API Key"
+    required: false
+    default: ""
+  openai-api-key:
+    description: "OpenAI or compatible API Key"
+    required: false
+    default: ""
+
+outputs:
+  notes_path:
+    description: "Path to the generated release notes file"
+    value: "${{ steps.generator.outputs.notes_path }}"
+  notes_content:
+    description: "Markdown content of the generated release notes"
+    value: "${{ steps.generator.outputs.notes_content }}"
+  provider_used:
+    description: "Name of the AI provider that successfully generated the notes"
+    value: "${{ steps.generator.outputs.provider_used }}"
+  model_used:
+    description: "Model name that was dynamically resolved and used"
+    value: "${{ steps.generator.outputs.model_used }}"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Fetch repository history
+      shell: bash
+      run: |
+        if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+          git fetch --prune --unshallow --tags || git fetch --tags
+        fi
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.13"
+        cache: "pip"
+        cache-dependency-path: "${{ github.action_path }}/requirements.txt"
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        python3 -m pip install -r "${{ github.action_path }}/requirements.txt"
+
+    - name: Run Release Notes Generator
+      id: generator
+      shell: bash
+      env:
+        PYTHONUNBUFFERED: "1"
+        INPUT_VERSION: "${{ inputs.version }}"
+        INPUT_PROVIDER: "${{ inputs.provider }}"
+        INPUT_MODEL: "${{ inputs.model }}"
+        INPUT_OUTPUT_FILE: "${{ inputs.output-file }}"
+        INPUT_PROMPT_TEMPLATE: "${{ inputs.prompt-template }}"
+        GEMINI_API_KEY: "${{ inputs.gemini-api-key }}"
+        GROQ_API_KEY: "${{ inputs.groq-api-key }}"
+        OPENAI_API_KEY: "${{ inputs.openai-api-key }}"
+      run: |
+        PYTHONPATH="${{ github.action_path }}/src" python3 "${{ github.action_path }}/src/cli.py"
