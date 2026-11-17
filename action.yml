@@ -1,5 +1,5 @@
 name: "Doksmith Release Notes Generator"
-description: "Generate professional, structured release notes using Gemini, Groq, or OpenAI with automatic model discovery and fallback resilience."
+description: "Generate AI-powered release notes using Gemini, Groq, or OpenAI with automatic model discovery and fallback."
 author: "Doksmith"
 
 branding:
