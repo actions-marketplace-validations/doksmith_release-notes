@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   release-and-publish:
-    name: Self-Generate Notes, Publish Release & Move Major Tag
+    name: Self-Generate Notes & Publish Release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code & Full History
@@ -69,14 +69,3 @@ jobs:
               --verify-tag \
               "${PRERELEASE_FLAG[@]}"
           fi
-
-      - name: Update Floating Major Version Tag
-        env:
-          TAG: ${{ steps.resolve_tag.outputs.tag }}
-        run: |
-          MAJOR="${TAG%%.*}"
-          echo "Updating floating major tag ${MAJOR} to point to ${TAG}..."
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -fa "${MAJOR}" -m "Release ${TAG} (Major ${MAJOR})"
-          git push origin "${MAJOR}" --force
