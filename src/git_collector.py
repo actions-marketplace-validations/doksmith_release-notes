@@ -1,60 +1,86 @@
+"""
+Doksmith Release Notes Engine: Git Context & Log Collector.
+Extracts commit ranges, author mentions, and commit URL references.
+"""
+
+import re
 import subprocess
-from typing import Optional, Tuple
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
 
 
-class GitCollector:
-    """Collects git commit history and tags from repository."""
+@dataclass(frozen=True)
+class GitCommit:
+    sha: str
+    subject: str
+    author: str
+
+    def to_markdown(self, base_repo_url: str) -> str:
+        commit_link = f"[`{self.sha}`]({base_repo_url}/commit/{self.sha})"
+        return f"- {commit_link} - {self.subject} (@{self.author})"
+
+
+class GitContextCollector:
+    """Discovers git repository metadata, tags, and commits."""
 
     @staticmethod
-    def _run_git(*args: str) -> str:
-        cmd = ["git"] + list(args)
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return result.stdout.strip()
+    def execute(*args: str) -> str:
+        try:
+            res = subprocess.run(
+                ["git", *args],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            return res.stdout.strip()
+        except OSError as err:
+            print(f"[release-notes] Warning: git {args[0]} failed: {err}")
+            return ""
 
     @classmethod
-    def get_latest_commit_sha(cls) -> str:
-        try:
-            return cls._run_git("rev-parse", "--short", "HEAD")
-        except subprocess.SubprocessError:
-            return "unknown"
+    def resolve_repository_url(cls) -> str:
+        remote = cls.execute("remote", "get-url", "origin")
+        if not remote:
+            return "https://github.com/doksmith/release-notes"
+        clean = re.sub(r"^git@github\.com:", "https://github.com/", remote)
+        return re.sub(r"\.git$", "", clean)
 
     @classmethod
-    def get_previous_tag(cls, current_ref: Optional[str] = None) -> Optional[str]:
-        """Find the most recent tag before current_ref."""
-        target = current_ref or "HEAD"
-        try:
-            # Describe closest tag reachable before target
-            return cls._run_git("describe", "--tags", "--abbrev=0", f"{target}^")
-        except subprocess.SubprocessError:
-            try:
-                # If target itself is a tag or only 1 tag exists
-                tags = cls._run_git("tag", "--sort=-creatordate").splitlines()
-                if len(tags) > 1:
-                    return tags[1]
-            except subprocess.SubprocessError:
-                pass
+    def find_previous_tag(cls, current_version: str) -> Optional[str]:
+        raw_tags = cls.execute("tag", "--sort=-creatordate")
+        if not raw_tags:
             return None
 
+        for tag_entry in raw_tags.splitlines():
+            tag = tag_entry.strip()
+            if tag == current_version:
+                continue
+            # Ignore pre-releases or dev tags
+            if re.search(r"-(alpha|beta|rc|dev|staged)", tag, re.IGNORECASE):
+                continue
+            if re.match(r"^v?\d+\.\d+\.\d+", tag):
+                return tag
+        return None
+
     @classmethod
-    def get_commit_logs(cls, target_version: str) -> Tuple[str, Optional[str]]:
-        """
-        Extract commit logs between previous tag and target version.
-        Returns (commit_log_str, previous_tag).
-        """
-        prev_tag = cls.get_previous_tag(target_version)
+    def collect_commits(cls, target_version: str) -> Tuple[Optional[str], List[GitCommit]]:
+        prev_tag = cls.find_previous_tag(target_version)
+        target_ref = target_version
+        if not cls.execute("rev-parse", "--verify", f"{target_version}^{{commit}}"):
+            target_ref = "HEAD"
 
-        try:
-            if prev_tag:
-                rev_range = f"{prev_tag}..HEAD"
-                logs = cls._run_git("log", rev_range, "--pretty=format:%h - %s (%an)")
-            else:
-                # First release: fetch all commits up to HEAD (up to 150 commits)
-                logs = cls._run_git("log", "-n", "150", "--pretty=format:%h - %s (%an)")
-        except subprocess.SubprocessError as e:
-            raise RuntimeError(f"Failed to retrieve git commit logs: {e}") from e
+        rev_range = f"{prev_tag}..{target_ref}" if prev_tag else target_ref
+        raw_log = cls.execute("log", rev_range, "--pretty=format:%h|%s|%an")
 
-        if not logs.strip():
-            # Fallback if no commits in range
-            logs = cls._run_git("log", "-n", "10", "--pretty=format:%h - %s (%an)")
+        commits: List[GitCommit] = []
+        for line in raw_log.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("|", 2)
+            sha = parts[0].strip() if len(parts) > 0 else "unknown"
+            subject = parts[1].strip() if len(parts) > 1 else ""
+            author = parts[2].strip() if len(parts) > 2 else "contributor"
+            commits.append(GitCommit(sha=sha, subject=subject, author=author))
 
-        return logs.strip(), prev_tag
+        return prev_tag, commits
